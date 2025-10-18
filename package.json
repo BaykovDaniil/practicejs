@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "start": "SET NODE_ENV=development&&nodemon ./index",
-    "inspect": "SET NODE_ENV=development&&nodemon --inspect-brk ./index --ignore ./build/",
+    "start": "NODE_ENV=development&&nodemon ./index",
+    "inspect": "NODE_ENV=development&&nodemon --inspect-brk ./index --ignore ./build/",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "author": "",
