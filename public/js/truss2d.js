@@ -61,9 +61,12 @@ class Truss2d {
   @returns {Double} length of elem
   */
   getLRG(a, b, r, g) {// do calculate L, r, g parameters
-    const L = 1.0;//
-    r[0] = 1.0; r[1] = 0.0;
-    g[0] = 1.0;
+    const L = Math.sqrt( (b[0] - a[0])*(b[0] - a[0]) + (b[1] - a[1])*(b[1] - a[1]) );// длина конечного элемента(по координатам определяем) 
+    r[0] = (b[0]-a[0]) / L; r[1] = (b[1]-a[1]) / L; // направляющие координаты
+    g[0] = r[0] * r[0]; 
+    g[1] = r[0] * r[1]; 
+    g[2] = r[1] * r[0]; 
+    g[3] = r[1] * r[1]; 
     return L;
   }
 
@@ -91,21 +94,21 @@ class Truss2d {
     console.log("Kinematic boundary condition is applyed");
   }
   /**
-  @param {Double} kx - coefficient stiffness
-  @param {Array<Double>} gradG - graient of element
-  @param {Array<Double>} block - result of a stiffness block
+  @param {Double} kx - coefficient stiffness EA/L
+  @param {Array<Double>} gradG - graient of element матрица
+  @param {Array<Double>} block - result of a stiffness block матрица 2 на 2 жесткости
   */
   blockStiffness(kx, gradG, block) {
     const edim = this.edim;
     for (let i = 0; i < block.length; i++) {
-      //...
+      block[i] = kx * gradG[i];
     }
 
-    for (let p = 0; p < edim; p++) {
-      for (let q = 0; q < edim; q++) {
-        // block[...] += ...;
-      }
-    }
+    // for (let p = 0; p < edim; p++) {
+    //   for (let q = 0; q < edim; q++) {
+    //     // block[...] += ...;
+    //   }
+    // }
   }
 
   kinematicTest() { // Л.Сегерлинд. Применение метода конечных элементов стр. 110-112
@@ -174,43 +177,85 @@ class Truss2d {
     const node = this.node, elem = this.elem, edim = this.edim, ndim = this.ndim,
       esize = this.esize;
     const elemStiffness = new Array(this.edim * this.edim).fill(0);
+    const tmp = new Array(this.edim * this.edim).fill(0);
     const elemStiffness2d = new Array(edim * edim * ndim * ndim).fill(0);
     for (let ie = 0; ie < esize; ie++) {
-      const A = 1.0;//this.material[...];
-      const E = 1.0;//this.material[...];
-      const al = 1.0;//this.material[...];
-      const th = 1.0;//this.material[...];
 
-      // P[0] = elem[...];
-      // P[1] = ...;
+      const A  = this.material[ie * this.materialdim + 0];//this.material[...];
+      const E  = this.material[ie * this.materialdim + 1];//this.material[...];
+      const al = this.material[ie * this.materialdim + 2];//this.material[...];
+      const th = this.material[ie * this.materialdim + 3];//this.material[...];
 
-      // Q[0] = ...;
-      // Q[1] = ...;
+      P[0] = this.elem[ie * this.edim + 0];
+      P[1] = this.elem[ie * this.edim + 1];
+      Q[0] = this.elem[ie * this.edim + 0];
+      Q[1] = this.elem[ie * this.edim + 1];
 
-      // a[0] = node[...];
-      // a[1] = ...;
-      // b[0] = ...;
-      // b[1] = ...;
+      a[0] = this.node[P[0] * this.ndim + 0];
+      a[1] = this.node[P[0] * this.ndim + 1];
+      b[0] = this.node[P[1] * this.ndim + 0];
+      b[1] = this.node[P[1] * this.ndim + 1];
 
-      let L = this.getLRG(a, b, r, g);
-      const kx = 1.0;//...
+      let L    = this.getLRG(a, b, r, g);
+      const kx = E*A/L;
       this.blockStiffness(kx, gradG, elemStiffness);
       console.log(`ie=${ie}`);
       console.log(`L=${L} r=${r}`);
       logm('gij=', ndim, g);
       logm('Kpq=', edim, elemStiffness, [], 12, 1);
 
+      tmp[0] = g[0] * elemStiffness[0];
+      tmp[1] = g[1] * elemStiffness[1];
+      tmp[2] = g[2] * elemStiffness[2];
+      tmp[3] = g[3] * elemStiffness[3];
+
       elemStiffness2d.fill(0);
+
+      elemStiffness2d[0]  = tmp[0];
+      elemStiffness2d[1]  = -tmp[1];
+      elemStiffness2d[4]  = -tmp[2];
+      elemStiffness2d[5]  = tmp[3];
+
+      elemStiffness2d[2]  = -tmp[0];
+      elemStiffness2d[3]  = tmp[1];
+      elemStiffness2d[6]  = tmp[2];
+      elemStiffness2d[7]  = -tmp[3];
+
+      elemStiffness2d[8]  = -tmp[0];
+      elemStiffness2d[9]  = tmp[1];
+      elemStiffness2d[12] = tmp[2];
+      elemStiffness2d[13] = -tmp[3];
+
+      elemStiffness2d[10] = tmp[0];
+      elemStiffness2d[11] = -tmp[1];
+      elemStiffness2d[14] = -tmp[2];
+      elemStiffness2d[15] = tmp[3];
+
       for (let p = 0; p < edim; p++) {
         // add termal force
         // ...;
         // ...;
+        
 
-        // for (let q = 0; q < edim; q++) {
-        //   for (let i = 0; i < ndim; i++) {
-        //     for (let j = 0; j < ndim; j++) {
-        //       elemStiffness2d[...] += ...;
-        //       globalStiffness[...] += ...;
+        for (let q = 0; q < edim; q++) {
+
+          // globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + 0] += elemStiffness2d[0];
+          // globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + 1] += elemStiffness2d[1];
+          // globalStiffness[(P[p] + 0)*N*this.ndim+N + Q[q]*this.ndim + 0] += elemStiffness2d[2];
+          // globalStiffness[(P[p] + 0)*N*this.ndim+N + Q[q]*this.ndim + 1] += elemStiffness2d[3];
+
+          globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + 0] += tmp[0];
+          globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + 1] += Math.pow(-1,(P[p] + 0) + Q[q] + 1)*tmp[1];
+          globalStiffness[(P[p] + 0)*N*this.ndim+N + Q[q]*this.ndim + 0] += Math.pow(-1,(P[p] + 1) + Q[q] + 0)*tmp[2];
+          globalStiffness[(P[p] + 0)*N*this.ndim+N + Q[q]*this.ndim + 1] += tmp[3];
+          for (let i = 0; i < ndim; i++) {
+            for (let j = 0; j < ndim; j++) {
+              // elemStiffness2d[...] += ...;
+              // elemStiffness2d[p*this.ndim + i] += g[] * elemStiffness[i*2 +j];
+              // globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + j] += elemStiffness2d[i+j];
+            }
+          }
+        }
       }
       logm('K^ij_pq=', edim * ndim, elemStiffness2d, [], 12, 1);
     }
@@ -224,7 +269,7 @@ class Truss2d {
     printSCR(val, I, J, 12, 1);
 
     const result = new Array(N).fill(0);
-    // const { succesfull, error } = cg(N, I, J, val, this.load, 1, result);
+    const { succesfull, error } = cg(N, I, J, val, this.load, 1, result);
     
     // console.log(`Расчет выполнен ${succesfull ? `успешно` : `с ошибками`}! `, `Наибольшая невязка: ${error}`);
     printResult(ndim, this.node, result, 14, 5);

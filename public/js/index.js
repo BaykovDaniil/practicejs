@@ -1,3 +1,3 @@
-import { Triangle } from "./triangle.js";
+import { Struct2d } from "./struct2d.js";
 
-window.triangle = new Triangle();
+window.Struct2d = new Struct2d();
