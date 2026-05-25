@@ -9,15 +9,27 @@ class Truss2d {
     this.edim = Truss2d.edim;
     this.ndim = Truss2d.ndim;
     this.elem = [
-      2, 0,
       0, 1,
-      1, 2
+      1, 2,
+      3, 4,
+      4, 5,
+      5, 6,
+      3, 0,
+      0, 4,
+      4, 1,
+      1, 5,
+      5, 2,
+      2, 6
     ];
 
     this.node = [// [cm]
       0, 0,
-      500, 0,
-      900, 692.82032
+      600, 0,
+      1200, 0,
+      -300, 300,
+      300, 300,
+      900, 300,
+      1500, 300
     ];
 
     this.material = [// свойство стержня: area, E, alpha, theta 
@@ -25,22 +37,38 @@ class Truss2d {
       // E - модуль Юнга [N/cm2], 
       // alpha - коэффициент теплового расширения alpha 
       // theta - перепад температуры
-      10, 20e+6, 11e-6, 5, // ie = 0
-      20, 20e+6, 11e-6, 5, // ie = 1
-      20, 20e+6, 11e-6, 5  // ie = 2
+      30, 20e+6, 11e-6, 5, // ie = 0
+      30, 20e+6, 11e-6, 5, // ie = 1
+      30, 20e+6, 11e-6, 5, // ie = 2
+      30, 20e+6, 11e-6, 5, // ie = 3
+      30, 20e+6, 11e-6, 5, // ie = 4
+      30, 20e+6, 11e-6, 5, // ie = 5
+      30, 20e+6, 11e-6, 5, // ie = 6
+      30, 20e+6, 11e-6, 5, // ie = 7
+      30, 20e+6, 11e-6, 5, // ie = 8
+      30, 20e+6, 11e-6, 5, // ie = 9
+      30, 20e+6, 11e-6, 5  // ie = 10
     ];
     this.materialdim = 4;
 
     this.load = [// [N]
+      0.0, -100.0e+3,
+      0.0, -100.0e+3,
+      0.0, -100.0e+3,
       0.0, 0.0,
       0.0, 0.0,
-      0.0, -100.0e+3
+      0.0, 0.0,
+      0.0, 0.0
     ];
 
     this.bound = [
+      undefined, undefined,
+      undefined, undefined,
+      undefined, undefined,
       0.0, 0.0,
-      undefined, 0.0,
-      undefined, undefined
+      undefined, undefined,
+      undefined, undefined,
+      undefined, 0.0
     ];
 
     this.solve();
@@ -78,16 +106,18 @@ class Truss2d {
   */
   applyKinematic(N, u, f, stiffness) {// f, stiffness are modificated params
     for (let p = 0; p < N; p++) {
+      if (u[p] === undefined) {
+        continue;
+      }
+
       for (let q = 0; q < N; q++) {
-        if (u[p] === undefined)
-          continue;
         if (p === q) {
-          // f[p] = ;
+          f[p] = stiffness[p * N + p] * u[p];
         }
         else {
-          // stiffness[p * N + q] = ;
-          // f[q] -= ;
-          // stiffness[q * N + p] =  ;
+          stiffness[p * N + q] = 0.0;
+          f[q] -= stiffness[q * N + p] * u[p];
+          stiffness[q * N + p] = 0.0;
         }
       }
     }
@@ -140,16 +170,21 @@ class Truss2d {
   transformMatrixToCsr(M, N, stiffness) {
     const I = new Array(M + 1).fill(0);
     const J = [], val = [];
-    let nz = 0, icounter = 0;
+    let nz = 0;
 
     for (let i = 0; i < M; i++) {
-      // ...
+      I[i] = nz;
       for (let j = 0; j < N; j++) {
-
-        // ...
+        const value = stiffness[i * N + j];
+        if (value === 0.0) {
+          continue;
+        }
+        val.push(value);
+        J.push(j);
+        nz++;
       }
     }
-    // ...
+    I[M] = nz;
     return [val, I, J]
   }
 
@@ -163,7 +198,6 @@ class Truss2d {
       5.0, 0.0, 0.0, 7.0, 8.0,
       0.0, 0.0, 9.0, 0.0, 6.0,
     ];
-    logm(`transformMatrixTest m = ${4}x${5}`, N, stiffness, [], 3, 0);
     const [val, I, J] = this.transformMatrixToCsr(M, N, stiffness);
     printSCR(val, I, J, 3, 0);
   }
@@ -200,7 +234,7 @@ class Truss2d {
       const kx = E*A/L;
       this.blockStiffness(kx, gradG, elemStiffness);
       console.log(`ie=${ie}`);
-      console.log(`L=${L} r=${r}`);
+      console.log(`L=${L.toFixed(6)}; ri=(${r[0].toFixed(6)}, ${r[1].toFixed(6)})`);
       logm('gij=', ndim, g);
       logm('Kpq=', edim, elemStiffness, [], 12, 1);
 
@@ -232,27 +266,23 @@ class Truss2d {
       elemStiffness2d[15] = tmp[3];
 
       for (let p = 0; p < edim; p++) {
-        // add termal force
-        // ...;
-        // ...;
+        const dN = E * A * al * th;
+        const thermSign = p === 0 ? -1.0 : 1.0;
+        for (let i = 0; i < ndim; i++) {
+          const row = P[p] * ndim + i;
+          if (this.bound[row] === undefined) {
+            this.load[row] += thermSign * dN * r[i];
+          }
+        }
         
 
         for (let q = 0; q < edim; q++) {
-
-          // globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + 0] += elemStiffness2d[0];
-          // globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + 1] += elemStiffness2d[1];
-          // globalStiffness[(P[p] + 0)*N*this.ndim+N + Q[q]*this.ndim + 0] += elemStiffness2d[2];
-          // globalStiffness[(P[p] + 0)*N*this.ndim+N + Q[q]*this.ndim + 1] += elemStiffness2d[3];
-
-          globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + 0] += tmp[0];
-          globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + 1] += Math.pow(-1,(P[p] + 0) + Q[q] + 1)*tmp[1];
-          globalStiffness[(P[p] + 0)*N*this.ndim+N + Q[q]*this.ndim + 0] += Math.pow(-1,(P[p] + 1) + Q[q] + 0)*tmp[2];
-          globalStiffness[(P[p] + 0)*N*this.ndim+N + Q[q]*this.ndim + 1] += tmp[3];
           for (let i = 0; i < ndim; i++) {
             for (let j = 0; j < ndim; j++) {
-              // elemStiffness2d[...] += ...;
-              // elemStiffness2d[p*this.ndim + i] += g[] * elemStiffness[i*2 +j];
-              // globalStiffness[(P[p] + 0)*N*this.ndim + Q[q]*this.ndim + j] += elemStiffness2d[i+j];
+              const row = P[p] * ndim + i;
+              const col = Q[q] * ndim + j;
+              const local = (p * ndim + i) * edim * ndim + q * ndim + j;
+              globalStiffness[row * N + col] += elemStiffness2d[local];
             }
           }
         }
@@ -262,7 +292,12 @@ class Truss2d {
     logm('Before kinematic boundary condition', N, globalStiffness, this.load, 12, 1);
     this.applyKinematic(N, this.bound, this.load, globalStiffness);
     logm('', N, globalStiffness, this.load, 12, 1);
-    this.kinematicTest();
+    const kinematicStatus = this.kinematicTest();
+    if (kinematicStatus !== 0) {
+      console.log("\nKinematic error\n");
+      return kinematicStatus;
+    }
+    console.log("\nKinematic test ok\n");
     this.transformMatrixTest();
 
     const [val, I, J] = this.transformMatrixToCsr(N, N, globalStiffness);
@@ -277,29 +312,28 @@ class Truss2d {
     const aforces = new Array(esize).fill(0);
 
     for (let ie = 0; ie < esize; ie++) {
-      const A = 1.0;//this.material[...];
-      const E = 1.0;//this.material[...];
-      const al = 1.0;//this.material[...];
-      const th = 1.0;//this.material[...];
+      const A  = this.material[ie * this.materialdim + 0];
+      const E  = this.material[ie * this.materialdim + 1];
+      const al = this.material[ie * this.materialdim + 2];
+      const th = this.material[ie * this.materialdim + 3];
 
-      // P[0] = elem[...];
-      // P[1] = ...;
+      P[0] = elem[ie * edim + 0];
+      P[1] = elem[ie * edim + 1];
 
-      // Q[0] = ...;
-      // Q[1] = ...;
-
-      // a[0] = node[...];
-      // a[1] = ...;
-      // b[0] = ...;
-      // b[1] = ...;
+      a[0] = node[P[0] * ndim + 0];
+      a[1] = node[P[0] * ndim + 1];
+      b[0] = node[P[1] * ndim + 0];
+      b[1] = node[P[1] * ndim + 1];
 
       const L = this.getLRG(a, b, r, g);
 
-      // const dN = ...;
-      // aforces[ie] -= ...;
+      const dN = E * A * al * th;
+      aforces[ie] -= dN;
       for (let q = 0; q < edim; q++) {
+        const sign = q === 0 ? -1.0 : 1.0;
         for (let j = 0; j < ndim; j++) {
-          // aforces[ie] += ...;
+          const dof = P[q] * ndim + j;
+          aforces[ie] += E * A / L * sign * r[j] * result[dof];
         }
       }
     }

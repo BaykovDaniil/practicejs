@@ -8,7 +8,7 @@ class Struct2d {
   static ndim = 2; // степень свободы узла на плоскости 2Д
   static udim = 3;
   static kdim = this.udim * this.edim;
-  constructor() {
+  constructor(options = {}) {
     this.edim = Struct2d.edim;
     this.ndim = Struct2d.ndim;
     this.udim = Struct2d.udim;
@@ -16,40 +16,64 @@ class Struct2d {
 
     this.pdim = 3;
     this.elem = [
-      0, 1,
-      1, 2,
+      0, 2,
+      2, 3,
+      3, 4,
+      4, 5,
+      5, 1,
     ];
 
     this.node = [// [cm]
       0, 0,
-      282.842712474619, 282.842712474619,
-      682.842712474619, 282.842712474619
+      900, 0,
+      0, 600,
+      300, 600,
+      600, 600,
+      900, 600,
     ];
 
-    // this.elastic = [20.6, 0.3]; // { [MN/cm2], [1]}: модуль Юнга и коэфф. Пуассона
-    // this.thikness = 1.0; // [cm]: толщина
-    // this.alpha = 11.3e-06;
-    // this.thetta = 100;
+    this.elastic = [20.6, 0.3]; // { [MN/cm2], [1]}: модуль Юнга и коэфф. Пуассона
+    this.thikness = 1.0; // [cm]: толщина
+    this.alpha = 11.3e-06;
+    this.thetta = 0;
+    if (options.thetta !== undefined) {
+      this.thetta = options.thetta;
+    }
     this.eparam = [ // E|N/cm2|, A|cm2|, J|cm4| by element
+      20e+6, 30, 400,
+      20e+6, 30, 400,
+      20e+6, 30, 400,
       20e+6, 30, 400,
       20e+6, 30, 400,
     ];
 
     this.load = [ // [ux,uy,rz]
         0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0,
+        0.0, 0.0, 0.0,
+        0.0, -100000, 25000,
         0.0, -100000, 25000,
         0.0, 0.0, 0.0,
     ];
 
     this.ieload = { // [py,mz]
-        0: [10, 10],
-        1: [10, 10]
+        0: {'q_0': 200000/600, 'm_0': 0, 'x':[0, 0.5, 1]}
+        // 4: {'q_0': 200000/600, 'm_0': 0, 'x':[0, 0.5, 1]}
     };
+
+    // { // [py,mz]
+    //     1: {'q_0': 10, 'm_0': 10, 'x':[0, 0.5, 1]},
+    //     2: {'q_0': 10, 'm_0': 10, 'x':[0, 0.5, 1]},
+    //     3: {'q_0': 10, 'm_0': 10, 'x':[0, 0.5, 1]}
+    // };
 
     this.bound = [ // [cm]: Кинематические граничные условия
       0.0, 0.0, 0.0,
-      undefined, undefined, undefined,
       0.0, 0.0, 0.0,
+      undefined, undefined, undefined,
+      undefined, undefined, undefined,
+      undefined, undefined, undefined,
+      undefined, undefined, undefined,
     ];
 
     this.solve();
@@ -397,6 +421,94 @@ class Struct2d {
 
   }
 
+  getElementLoad(ie) {
+    const load = this.ieload && this.ieload.hasOwnProperty(ie) ? this.ieload[ie] : {};
+
+    if (Array.isArray(load)) {
+      return {
+        q: -(load[0] || 0),
+        m: load[1] || 0,
+        x: load[2] || [0, 0.5, 1],
+      };
+    }
+
+    return {
+      q: -(load['q_0'] || 0),
+      m: load['m_0'] || 0,
+      x: load['x'] || [0, 0.5, 1],
+    };
+  }
+
+  getEquivalentLocalLoad(L, q, m) {
+    const feLocal = new Array(this.kdim).fill(0);
+    const L2 = L * L;
+
+    feLocal[1] += q * L / 2.0;
+    feLocal[4] += q * L / 2.0;
+
+    feLocal[2] += q * L2 / 12.0;
+    feLocal[5] -= q * L2 / 12.0;
+
+    feLocal[1] -= m;
+    feLocal[4] += m;
+
+    return feLocal;
+  }
+
+  getEquivalentThermalLoad(E, A) {
+    const feLocal = new Array(this.kdim).fill(0);
+    const dN = E * A * this.alpha * this.thetta;
+
+    feLocal[0] = -dN;
+    feLocal[3] = dN;
+
+    return feLocal;
+  }
+
+  addLocalLoadToGlobal(T, feLocal, globalDofs, load) {
+    const feGlobal = new Array(this.kdim).fill(0);
+    for (let i = 0; i < this.kdim; i++) {
+      for (let j = 0; j < this.kdim; j++) {
+        feGlobal[i] += T[j * this.kdim + i] * feLocal[j];
+      }
+    }
+
+    for (let i = 0; i < this.kdim; i++) {
+      const gdof = globalDofs[i];
+      load[gdof] += feGlobal[i];
+    }
+  }
+
+  calcM(x, endForces, q, m) {
+    return -endForces[2] + (endForces[1] - m) * x + q * x*x / 2.0;
+  }
+
+  calcQ(x, endForces, q, m) {
+    return endForces[1] - 2*m + q * x;
+  }
+
+  calcV(x, L, localU, normalSign) {
+    const xi = x / L;
+    const xi2 = xi * xi;
+    const xi3 = xi2 * xi;
+
+    const N1 = 2*xi3 - 3*xi2 + 1;
+    const N2 = L * (xi3 - 2*xi2 + xi);
+    const N3 = 3*xi2 - 2*xi3;
+    const N4 = L * (xi3 - xi2);
+
+    const v = N1*localU[1] + N2*localU[2] + N3*localU[4] + N4*localU[5];
+    return normalSign * v;
+  }
+
+  getVNormalSign(x1, y1, x2, y2) {
+    const L = Math.hypot(x2 - x1, y2 - y1);
+    const jx = -(y2 - y1) / L;
+    const jy = (x2 - x1) / L;
+    const normal = Math.abs(jx) > Math.abs(jy) ? jx : jy;
+
+    return normal < 0 ? -1 : 1;
+  }
 
   solve() {
 
@@ -433,114 +545,84 @@ class Struct2d {
     
 
     for (let ie = 0; ie < this.esize; ie++) {
-    const E = this.eparam[3*ie + 0];//eparam[...];
-    const A = this.eparam[3*ie + 1];//eparam[...];
-    const J = this.eparam[3*ie + 2];//eparam[...];
+      const E = this.eparam[3*ie + 0];//eparam[...];
+      const A = this.eparam[3*ie + 1];//eparam[...];
+      const J = this.eparam[3*ie + 2];//eparam[...];
 
-    P[0] = this.elem[2*ie + 0];//elem[...];
-    P[1] = this.elem[2*ie + 1];//elem[...];
+      P[0] = this.elem[2*ie + 0];//elem[...];
+      P[1] = this.elem[2*ie + 1];//elem[...];
 
-    Q[0] = this.elem[2*ie + 0]; //elem[...];
-    Q[1] = this.elem[2*ie + 1]; //elem[...];
+      Q[0] = this.elem[2*ie + 0]; //elem[...];
+      Q[1] = this.elem[2*ie + 1]; //elem[...]; 
 
-    let L = 1;
-    a[0] = this.node[2*P[0] + 0];//node[...];
-    a[1] = this.node[2*P[0] + 1];//node[...];
-    b[0] = this.node[2*P[1] + 0];//node[...];
-    b[1] = this.node[2*P[1] + 1];//node[...];
-    console.log(a);
-    console.log(b);
-    L = Math.sqrt( (a[0] - b[0])*(a[0] - b[0]) + (a[1] - b[1])*(a[1] - b[1]) );
+      let L = 1;
+      a[0] = this.node[2*P[0] + 0];//node[...];
+      a[1] = this.node[2*P[0] + 1];//node[...];
+      b[0] = this.node[2*P[1] + 0];//node[...];
+      b[1] = this.node[2*P[1] + 1];//node[...];
+      console.log(a);
+      console.log(b);
+      L = Math.sqrt( (a[0] - b[0])*(a[0] - b[0]) + (a[1] - b[1])*(a[1] - b[1]) );
 
-    this.getLT(a, b, L, T);
+      this.getLT(a, b, L, T);
 
-    console.log(`elem ${ie}`);     
-    console.log(`L = ${L}`);
-    logm('Matrix Transformation', this.edim * this.udim, T, 5, 0);
- 
-    this.setLocalStiffness(L, E, A, J, T, localStiffness);
-    logm('Local Stiffness [K] (in local basis)', this.kdim, localStiffness, 5, 0);
+      console.log(`elem ${ie}`);     
+      console.log(`L = ${L}`);
+      logm('Matrix Transformation', this.edim * this.udim, T, 5, 0);
+  
+      this.setLocalStiffness(L, E, A, J, T, localStiffness);
+      logm('Local Stiffness [K] (in local basis)', this.kdim, localStiffness, 5, 0);
 
-    const result_tmp = new Array(this.kdim * this.kdim);
-    const result     = new Array(this.kdim * this.kdim);
-    this.multiplyAB(this.kdim, T, localStiffness, result_tmp, 1);
-    this.multiplyAB(this.kdim, result_tmp, T, result, 0);
-    logm('localStiffness [T]*[K][T] (in global basis)', this.kdim, result, 5, 0);
-
-
-    const dofPerNode = this.udim;
-    const node1 = P[0];
-    const node2 = P[1];
+      const result_tmp = new Array(this.kdim * this.kdim);
+      const result     = new Array(this.kdim * this.kdim);
+      this.multiplyAB(this.kdim, T, localStiffness, result_tmp, 1);
+      this.multiplyAB(this.kdim, result_tmp, T, result, 0);
+      logm('localStiffness [T]*[K][T] (in global basis)', this.kdim, result, 5, 0);
 
 
-    const globalDofs = [
-        node1 * dofPerNode + 0,  // u в узле 1
-        node1 * dofPerNode + 1,  // v в узле 1
-        node1 * dofPerNode + 2,  // z в узле 1
-        node2 * dofPerNode + 0,  // u в узле 2
-        node2 * dofPerNode + 1,   // v в узле 2
-        node2 * dofPerNode + 2   // z в узле 2
-    ];
+      const dofPerNode = this.udim;
+      const node1 = P[0];
+      const node2 = P[1];
 
-    
-    
-    if (this.ieload && this.ieload.hasOwnProperty(ie)) {
-      const q = this.ieload[ie][0] || 0; // поперечная нагрузка в локальной оси y
-      const m = this.ieload[ie][1] || 0; // изгибающий момент вдоль z
+
+      const globalDofs = [
+          node1 * dofPerNode + 0,  // u в узле 1
+          node1 * dofPerNode + 1,  // v в узле 1
+          node1 * dofPerNode + 2,  // z в узле 1
+          node2 * dofPerNode + 0,  // u в узле 2
+          node2 * dofPerNode + 1,   // v в узле 2
+          node2 * dofPerNode + 2   // z в узле 2
+      ];
 
     
-      const feLocal = new Array(this.kdim).fill(0);
-      const L2 = L * L;
-
-    // Вклад от q
-      const qL2 = q * L / 2.0;
-      feLocal[1] += qL2;
-      feLocal[4] += qL2;
-
-      const qL2_12 = q * L2 / 12.0;
-      feLocal[2] += qL2_12;
-      feLocal[5] -= qL2_12;
-
-    // Вклад от m
-      // const mL2 = m * L / 2.0;
-      // feLocal[2] += mL2;
-      // feLocal[5] += mL2;
-      feLocal[1] -= m;
-      feLocal[4] += m;
-
-    // Переход к глобальной системе: F_global = T^T * F_local
-      const feGlobal = new Array(this.kdim).fill(0);
-      for (let i = 0; i < this.kdim; i++) {
-        for (let j = 0; j < this.kdim; j++) {
-          feGlobal[i] += T[j * this.kdim + i] * feLocal[j];
-        }
+    
+      if (this.ieload && this.ieload.hasOwnProperty(ie)) {
+        const { q, m } = this.getElementLoad(ie);
+        const feLocal = this.getEquivalentLocalLoad(L, q, m);
+        this.addLocalLoadToGlobal(T, feLocal, globalDofs, load);
       }
 
-    // Добавление к глобальному вектору нагрузок
-    for (let i = 0; i < this.kdim; i++) {
-      const gdof = globalDofs[i];
-      load[gdof] += feGlobal[i];
+      const feThermal = this.getEquivalentThermalLoad(E, A);
+      this.addLocalLoadToGlobal(T, feThermal, globalDofs, load);
+
+
+
+
+      for (let i = 0; i < this.kdim; i++) {
+          for (let j = 0; j < this.kdim; j++) {
+              const globalRow = globalDofs[i];
+              const globalCol = globalDofs[j];
+              const index = globalRow * N + globalCol;
+              globalStiffness[index] += result[i * this.kdim + j];
+          }
+      }
     }
-  }
-
-
-
-
-    for (let i = 0; i < this.kdim; i++) {
-        for (let j = 0; j < this.kdim; j++) {
-            const globalRow = globalDofs[i];
-            const globalCol = globalDofs[j];
-            const index = globalRow * N + globalCol;
-            globalStiffness[index] += result[i * this.kdim + j];
-        }
-    }
-  }
 
     this.load = load;
 
     logm('globalStiffness matrix', N, globalStiffness, this.load, 8, 3);
 
-    let status = this.sumStiffnessTest(N, globalStiffness); // TODO
+    let status = this.sumStiffnessTest(N, globalStiffness);
 
     if (status !== 0) {
         console.log("\nSum stiffness error\n");
@@ -625,111 +707,175 @@ class Struct2d {
 
 
     // console.log(`\naxial forces by element`);
+    const locals = {};
 
-for (let ie = 0; ie < this.esize; ie++) {
-    const E = this.eparam[3 * ie + 0];
-    const A = this.eparam[3 * ie + 1];
-    const J = this.eparam[3 * ie + 2];
+    for (let ie = 0; ie < this.esize; ie++) {
+      console.log(`ie=${ie}`);
+      const E = this.eparam[3 * ie + 0];
+      const A = this.eparam[3 * ie + 1];
+      const J = this.eparam[3 * ie + 2];
 
-    const node1 = this.elem[2 * ie + 0]; // P[0]
-    const node2 = this.elem[2 * ie + 1]; // P[1]
+      const node1 = this.elem[2 * ie + 0]; // P[0]
+      const node2 = this.elem[2 * ie + 1]; // P[1]
 
-    // Координаты узлов
-    const x11 = this.node[2 * node1 + 0];
-    const y1 = this.node[2 * node1 + 1];
-    const x2 = this.node[2 * node2 + 0];
-    const y2 = this.node[2 * node2 + 1];
+      // Координаты узлов
+      const x11 = this.node[2 * node1 + 0];
+      const y1 = this.node[2 * node1 + 1];
+      const x2 = this.node[2 * node2 + 0];
+      const y2 = this.node[2 * node2 + 1];
 
-    const L = Math.hypot(x2 - x11, y2 - y1);
+      const L = Math.hypot(x2 - x11, y2 - y1);
 
-    // Матрица трансформации T (6x6 для плоского стержня с 3 степенями свободы на узел)
-    const T = new Array(this.kdim * this.kdim).fill(0);
-    this.getLT([x11, y1], [x2, y2], L, T);
+      // Матрица трансформации T
+      const T = new Array(this.kdim * this.kdim).fill(0);
+      this.getLT([x11, y1], [x2, y2], L, T);
 
-    // Глобальные перемещения узлов элемента (из решения result)
-    const dofPerNode = this.udim; // должно быть 3
-    const globalDofs = [
-        node1 * dofPerNode + 0, // u1
-        node1 * dofPerNode + 1, // v1
-        node1 * dofPerNode + 2, // theta1
-        node2 * dofPerNode + 0, // u2
-        node2 * dofPerNode + 1, // v2
-        node2 * dofPerNode + 2  // theta2
-    ];
+      // Глобальные перемещения узлов элемента
+      const dofPerNode = this.udim; // должно быть 3
+      const globalDofs = [
+          node1 * dofPerNode + 0, // u1
+          node1 * dofPerNode + 1, // v1
+          node1 * dofPerNode + 2, // theta1
+          node2 * dofPerNode + 0, // u2
+          node2 * dofPerNode + 1, // v2
+          node2 * dofPerNode + 2  // theta2
+      ];
 
-    const globalU = new Array(this.kdim);
-    for (let i = 0; i < this.kdim; i++) {
-        globalU[i] = result[globalDofs[i]];
+      const globalU = new Array(this.kdim);
+      for (let i = 0; i < this.kdim; i++) {
+          globalU[i] = result[globalDofs[i]];
+      }
+
+      // u_local = T * u_global
+      const localU = new Array(this.kdim);
+      for (let i = 0; i < this.kdim; i++) {
+          localU[i] = 0;
+          for (let j = 0; j < this.kdim; j++) {
+              localU[i] += T[i * this.kdim + j] * globalU[j];
+          }
+      }
+
+      console.log(localU);
+
+      // Локальная матрица жёсткости(6x6) без трансформации
+      const localK = new Array(this.kdim * this.kdim).fill(0);
+      this.setLocalStiffness(L, E, A, J, T, localK);
+
+      // F_local = K_local * u_local
+      const localForces = new Array(this.kdim);
+      for (let i = 0; i < this.kdim; i++) {
+          localForces[i] = 0;
+          for (let j = 0; j < this.kdim; j++) {
+              localForces[i] += localK[i * this.kdim + j] * localU[j];
+          }
+      }
+
+      const { q, m } = this.getElementLoad(ie);
+      const feLocal = this.getEquivalentLocalLoad(L, q, m);
+      const feThermal = this.getEquivalentThermalLoad(E, A);
+      const endForces = localForces.map((force, index) => force - feLocal[index] - feThermal[index]);
+      locals[ie] = { localU, localForces, feLocal, feThermal, endForces, q, m, L };
+
+      // Осевое усилие (N) — это горизонтальная сила в первом узле в локальной системе
+      const axialForce = localForces[0];
+
+      const axialForceNode2 = localForces[3];
+
+      // console.log(`Element ${ie}: L = ${L.toFixed(4)}, Axial Force N = ${axialForce.toFixed(4)}`);
+
+      const forcesNode1 = [endForces[0], endForces[1], endForces[2]]; // N₁, Q₁, M₁
+      const forcesNode2 = [endForces[3], endForces[4], endForces[5]]; // N₂, Q₂, M₂
+
+      let x0 = Array(this.esize);
+      let x1 = Array(this.esize);
+      x0[0] = x11;
+      x0[1] = x2;
+      x1[0] = y1;
+      x1[1] = y2;
+      let f0 = Array(this.esize);
+      let f1 = Array(this.esize);
+      let f2 = Array(this.esize);
+      f0[0] = -forcesNode1[0];
+      // / this.eparam[1];
+      f0[1] = forcesNode2[0];
+      // / this.eparam[1];
+
+      f1[0] = forcesNode1[1] - 2*m;
+      f1[1] = -forcesNode2[1] - 2*m;
+
+      f2[0] = -forcesNode1[2];
+      f2[1] = forcesNode2[2];
+
+      const data = x0.map(
+          (item, P) => ({
+            'x0': item,
+            'x1': x1[P],
+            'f0': f0[P],
+            'f1': f1[P],
+            'f2': f2[P],
+          })
+        )
+        console.table(data)
+      
+      // Если нужно сохранить в массив
+      // this.axialForces[ie] = axialForce;
     }
 
-    // Перемещения в локальной системе координат: u_local = T * u_global
-    const localU = new Array(this.kdim);
-    for (let i = 0; i < this.kdim; i++) {
-        localU[i] = 0;
-        for (let j = 0; j < this.kdim; j++) {
-            localU[i] += T[i * this.kdim + j] * globalU[j];
-        }
-    }
 
-    // Локальная матрица жёсткости элемента (6x6) без трансформации
-    const localK = new Array(this.kdim * this.kdim).fill(0);
-    this.setLocalStiffness(L, E, A, J, T, localK);
+    // M и Q
+    console.log('M and Q at several points');
+    for (let ie = 0; ie < this.esize; ie++) {
 
-    // Локальные узловые силы: F_local = K_local * u_local
-    const localForces = new Array(this.kdim);
-    for (let i = 0; i < this.kdim; i++) {
-        localForces[i] = 0;
-        for (let j = 0; j < this.kdim; j++) {
-            localForces[i] += localK[i * this.kdim + j] * localU[j];
-        }
-    }
+      console.log(`ie=${ie}`);
+      
+      const elementState = locals[ie];
+      const { q, m, L, endForces } = elementState;
+      const x = this.getElementLoad(ie).x;
+      const M = new Array(x.length);
+      const shearForce = new Array(x.length);
+      const deflection = new Array(x.length);
 
-    // Осевое усилие (N) — это горизонтальная сила в первом узле в локальной системе
-    // Обычно: localForces[0] — сила по оси X в узле 1 (осевая)
-    const axialForce = localForces[0];
+      const i1 = this.elem[2*ie + 0];
+      const i2 = this.elem[2*ie + 1];
 
-    const axialForceNode2 = localForces[3];
+      const x11 = this.node[this.ndim*i1 + 0];
+      const x12 = this.node[this.ndim*i1 + 1];
+      const x21 = this.node[this.ndim*i2 + 0];
+      const x22 = this.node[this.ndim*i2 + 1];
+      const VNormalSign = this.getVNormalSign(x11, x12, x21, x22);
+      // u0[i] = result[this.udim*i + 0];
+      // const u11 = result[this.udim*i1 + 1];
+      // const u12 = result[this.udim*i1 + 2];
+      // const u21 = result[this.udim*i2 + 1];
+      // const u22 = result[this.udim*i2 + 2];
 
-    // console.log(`Element ${ie}: L = ${L.toFixed(4)}, Axial Force N = ${axialForce.toFixed(4)}`);
+      const E = this.eparam[3*ie + 0];
+      const J = this.eparam[3*ie + 2];
 
-    const forcesNode1 = [localForces[0], localForces[1], localForces[2]]; // N₁, Q₁, M₁
-    const forcesNode2 = [localForces[3], localForces[4], localForces[5]]; // N₂, Q₂, M₂
+      console.log(L, E, J, q, m);
 
-    let x0 = Array(this.esize);
-    let x1 = Array(this.esize);
-    x0[0] = x11;
-    x0[1] = x2;
-    x1[0] = y1;
-    x1[1] = y2;
-    let f0 = Array(this.esize);
-    let f1 = Array(this.esize);
-    let f2 = Array(this.esize);
-    f0[0] = -forcesNode1[0];
-    f0[1] = forcesNode2[0];
-
-    f1[0] = forcesNode1[1];
-    f1[1] = -forcesNode2[1];
-
-    f2[0] = -forcesNode1[2];
-    f2[1] = forcesNode2[2];
-
-    const data = x0.map(
-        (item, P) => ({
-          'x0': item,
-          'x1': x1[P],
-          'f0': f0[P],
-          'f1': f1[P],
-          'f2': f2[P],
+      console.log(elementState.localU);
+      for(let i=0; i<x.length; i++) {
+        const xi = x[i] * L;
+        M[i] = this.calcM(xi, endForces, q, m);
+        shearForce[i] = this.calcQ(xi, endForces, q, m);
+        deflection[i] = this.calcV(xi, L, elementState.localU, VNormalSign);
+        
+      }
+      
+      const data = x.map(
+        (item, index) => ({
+          'x/L': item,
+          'M': M[index],
+          'Q': shearForce[index],
+          'v': deflection[index],
         })
       )
       console.table(data)
-    
-    // Если нужно сохранить в массив
-    // this.axialForces[ie] = axialForce;
-}
 
-
-        
+      
+      
+    }
 
     return status;
   }

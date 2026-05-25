@@ -1,6 +1,7 @@
 const totalLength = 12, FractionDigits = 3;
 
-const nume = (num, fd = FractionDigits) => Number(num).toExponential(fd);
+const nume = (num, fd = FractionDigits) =>
+  Number(num).toExponential(fd).replace(/e([+-])(\d)$/, 'e$10$2');
 const numf = (num, fd = FractionDigits) => Number(num).toFixed(fd);
 
 const setline = (num, tl = totalLength) => {
@@ -29,28 +30,24 @@ export const logm = (title, size, array, vector = [], tl, fd) => {
 }
 
 export const printSCR = (val, I, J, tl, fd) => {
-  console.log(`I[${I.length}] J[${J.length}] val[${J.length}]`);
-  console.log(setline(`I`, 3, 0) + setline(`J`, 3, 0) + setline(`v`, tl, fd));
+  console.log(`nz=${J.length} I[${I.length}] J[${J.length}] val[${val.length}]`);
+  console.log(setline(`I`, 3, 0) + setline(`J`, 3, 0) + setline(`val`, Math.max(tl, 6), fd));
   for (let i = 0; i < J.length; i++) {
-    if (i < I.length) {
-      console.log(setline(I[i], 3, 0) + setline(J[i], 3, 0) + setline(numf(val[i], fd), tl));
-    }
-    else {
-      console.log(setline('-', 3, 0) + setline(J[i], 3, 0) + setline(numf(val[i], fd), tl));
-    }
+    const rowStart = i < I.length ? I[i] : '';
+    console.log(setline(rowStart, 3, 0) + setline(J[i], 3, 0) + setline(numf(val[i], fd), tl));
   }
 }
 
 
 export const printResult = (ndim, node, result, tl, fd) => {
-  const header = setline(`p`, 3, 0) + setline(`x`, tl, 1) + setline(`y`, tl, 1)
-    + setline(`ux`, tl, fd) + setline(`uy`, tl, fd);
+  const header = setline(`i`, 3, 0) + setline(`x0`, tl, 1) + setline(`x1`, tl, 1)
+    + setline(`u0`, tl, fd) + setline(`u1`, tl, fd);
   console.log(header);
 
   for (let p = 0; p < result.length / 2; p++) {
     const u = [result[ndim * p + 0], result[ndim * p + 1]];
     const x = [node[ndim * p + 0], node[ndim * p + 1]];
-    const line = setline(p, 3, 0) + setline(numf(x[0], 1), tl) + setline(numf(x[1], 1), tl)
+    const line = setline(p, 3, 0) + setline(numf(x[0], 3), tl) + setline(numf(x[1], 3), tl)
      + setline(nume(u[0], fd), tl) + setline(nume(u[1], fd), tl);
     console.log(line);
   }
@@ -59,10 +56,10 @@ export const printResult = (ndim, node, result, tl, fd) => {
 export const axialForcesPrint = (force) =>
 {
   const esize = force.length;
-  console.log(setline(`ie`, 3, 0) + setline(`N`, 12));
+  console.log(setline(`ie`, 3, 0) + setline(`axial force`, 12));
   for (let ie = 0; ie < esize; ie++)
   {
-    console.log(setline(ie, 3, 0) + setline(numf(force[ie], 1), 12));
+    console.log(setline(ie, 3, 0) + setline(numf(force[ie], 3), 12));
   }
 }
 
@@ -171,4 +168,3 @@ export const cg = (N, row, col, val, b, pN, x) => {
 }
 
 // ------- Base class for fem problem ---
-
