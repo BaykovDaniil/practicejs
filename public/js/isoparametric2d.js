@@ -1,6 +1,8 @@
 import { Vector3 } from "three";
 import { axialForcesPrint, cg, logm, printResult, printSCR } from "./helper.js";
 // import { sqrt } from "three/tsl";
+// COO -> CSR на следующую пару сделать
+// на следующей парепосчитаем перемещения, напряжения, деформации с тепловыми расширениями и морфирование
 
 class Isoparametric2d {
 
@@ -20,10 +22,10 @@ class Isoparametric2d {
     ];
 
     this.node = [// [cm]
-      0, 0,
-      0, 2,
-      2, 2,
-      2, 0
+      -0.5, -0.5,
+      0.5, -0.5,
+      0.5, 0.5,
+      -0.5, 0.5
     ];
 
     this.elastic = [20.6, 0.3]; // { [MN/cm2], [1]}: модуль Юнга и коэфф. Пуассона
@@ -37,8 +39,8 @@ class Isoparametric2d {
     this.load = [ // [ux,uy]
         0.0, 0.0, 
         0.0, 0.0,
-        0.0, -1000, 
-        0.0, -1000
+        0.0, -1e-3, 
+        0.0, -1e-3
     ];
 
     // this.ieload = { // [py,mz]
@@ -325,7 +327,7 @@ class Isoparametric2d {
   printSCR_Matrix(M, N, nz, val, I, J) {
 
     const matrix = new Array(N * M);
-    for (let i = 0; i < N * N; i++) {
+    for (let i = 0; i < M * N; i++) {
         matrix[i] = 0;
     }
 
@@ -509,12 +511,104 @@ class Isoparametric2d {
 
   }
 
+  getCsr(portrait, I, J, Val) {
+
+    const N = this.nsize * this.udim;
+
+    I.length = N + 1;
+    I.fill(0);
+
+    // Количество коэффициентов в каждой строке
+    for (let P = 0; P < this.nsize; P++) {
+      for (let k = 0; k < portrait[P].length; k++) {
+
+        const Q = portrait[P][k];
+
+        for (let i = 0; i < this.udim; i++) {
+          I[P*this.udim + i + 1] += this.udim;
+
+          if (P !== Q) {
+            I[Q*this.udim + i + 1] += this.udim;
+          }
+        }
+      }
+    }
+
+    // Начала строк
+    for (let i = 0; i < N; i++) {
+      I[i + 1] += I[i];
+    }
+
+    J.length = I[N];
+    Val.length = I[N];
+    Val.fill(0);
+
+    const next = I.slice(0, N);
+
+    // Столбцы обеих половин матрицы
+    for (let P = 0; P < this.nsize; P++) {
+      for (let k = 0; k < portrait[P].length; k++) {
+
+        const Q = portrait[P][k];
+
+        for (let i = 0; i < this.udim; i++) {
+          const row = P*this.udim + i;
+
+          for (let j = 0; j < this.udim; j++) {
+            const col = Q*this.udim + j;
+
+            J[next[row]++] = col;
+
+            if (P !== Q) {
+              J[next[col]++] = row;
+            }
+          }
+        }
+      }
+    }
+
+  }
+
+  getCsrIndex(row, col, I, J) {
+
+    let left = I[row];
+    let right = I[row + 1] - 1;
+
+    while (left <= right) {
+      const mid = Math.floor((left + right) / 2);
+
+      if (J[mid] === col) {
+        return mid;
+      }
+
+      if (J[mid] < col) {
+        left = mid + 1;
+      }
+      else {
+        right = mid - 1;
+      }
+    }
+
+    throw new RangeError("Позиция отсутствует в CSR");
+
+  }
+
 
   solve() {
 
     const portrait = [];
     this.getPortrait(portrait);
     console.log(portrait);
+    const I = [];
+    const J = [];
+    const Val = [];
+
+    this.getCsr(portrait, I, J, Val);
+
+    // const globalStiffness = new Array(N * N);
+    // for (let i = 0; i < N * N; i++) {
+    //     globalStiffness[i] = 0;
+    // }
 
     const v = this.elastic[1];
     const E = this.elastic[0];
@@ -523,11 +617,6 @@ class Isoparametric2d {
     const mu = E / ( 2*(1+v));
 
     const N = this.nsize * this.udim;
-
-    const globalStiffness = new Array(N * N);
-    for (let i = 0; i < N * N; i++) {
-        globalStiffness[i] = 0;
-    }
 
     const load = this.load.slice();
 
@@ -558,7 +647,7 @@ class Isoparametric2d {
     const elemStiffness = new Array(this.kdim * this.kdim);
 
     // this.printStiffness(N, globalStiffness);
-    logm('globalStiffness matrix', N, globalStiffness, [], 3, 0);
+    // logm('globalStiffness matrix', N, globalStiffness, [], 3, 0);
 
     // Сборка матрицы
     for (let ie = 0; ie < this.esize; ie++) {
@@ -646,8 +735,10 @@ class Isoparametric2d {
               const globalRow = P[p] * this.udim + i;
               const globalCol = P[q] * this.udim + j;
 
-              globalStiffness[globalRow * N + globalCol] +=
-                elemStiffness[row * this.kdim + col];
+              // globalStiffness[globalRow * N + globalCol] +=
+              //   elemStiffness[row * this.kdim + col];
+              const index = this.getCsrIndex(globalRow, globalCol, I, J);
+              Val[index] += elemStiffness[row * this.kdim + col];
             }
           }
         }
@@ -655,6 +746,8 @@ class Isoparametric2d {
     }
 
     this.load = load;
+
+    this.printSCR_Matrix(N, N, Val.length, Val, I, J);
 
 
     // const a = [0, 0, 0], b = [0, 0, 0], c = [0, 0, 0];
@@ -778,7 +871,7 @@ class Isoparametric2d {
 
     // this.load = load;
 
-    logm('globalStiffness matrix', N, globalStiffness, this.load, 8, 3);
+    // logm('globalStiffness matrix', N, globalStiffness, this.load, 8, 3);
 
     // let status = this.sumStiffnessTest(N, globalStiffness); // TODO
 
