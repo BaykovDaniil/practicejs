@@ -48,6 +48,7 @@ class Isoparametric2d {
     //     1: [10, 10]
     // };
 
+    // Только нулевые!!!!
     this.bound = [ // [cm]: Кинематические граничные условия
       0.0, 0.0,
       undefined, 0.0,
@@ -400,6 +401,8 @@ class Isoparametric2d {
 
   }
 
+
+
   getForm(result, xi1, xi2) { // result -> N_p(xi1,xi2)
 
     result[0] = 1 / 4 * (1 - xi1)*(1 - xi2);
@@ -476,66 +479,90 @@ class Isoparametric2d {
 
   }
 
-
   getPortrait(result) {
 
     result.length = this.nsize;
 
-    for (let P = 0; P < this.nsize; P++) {
+    for(let P = 0; P < this.nsize; P++) {
       result[P] = [];
     }
 
-    for (let ie = 0; ie < this.esize; ie++) {
-      for (let p = 0; p < this.edim; p++) {
+    for(let ie = 0; ie < this.esize; ie++) {
+      for(let p = 0; p < this.edim; p++) {
 
         const P = this.elem[ie * this.edim + p];
 
-        for (let q = 0; q < this.edim; q++) {
+        for(let q = 0; q < this.edim; q++) {
 
           const Q = this.elem[ie * this.edim + q];
 
-          if (Q < P) {
+          if(Q < P) {
             continue;
           }
 
-          if (result[P].indexOf(Q) === -1) {
-            result[P].push(Q);
+
+          // вынести
+          let i = 0;
+          while(i < result[P].length && result[P][i] < Q) {
+            i++;
           }
+
+          if(result[P][i] !== Q) {
+            result[P].splice(i, 0, Q);
+          }
+
+          // if(result[P].indexOf(Q) === -1) {
+          //   // result[P].push(Q);
+          //   if(Q==P) {
+          //     result[P].push(Q);
+          //   }
+          //   for(const i = 0; i < result[P].length; i++) {
+          //     if(result[P][i] < Q) {
+          //       result[P].splice(i, 0, Q);
+          //     }
+          //   }
+          // }
         }
       }
     }
 
-    for (let P = 0; P < this.nsize; P++) {
-      result[P].sort((a, b) => a - b);
-    }
+    // for (let P = 0; P < this.nsize; P++) {
+    //   result[P].sort((a, b) => a - b);
+    // }
 
   }
 
-  getCsr(portrait, I, J, Val) {
+  getCsr(portrait, I, J, Val, ) {
 
     const N = this.nsize * this.udim;
 
+    // let N_free = 0;
+    // flag.length = N;
+    // for(let i = 0; i < N; i++) {
+    //   flag[i] = this.bound[i] === undefined ? N_free++ : -1;
+    // }
+
     I.length = N + 1;
+    // I.length = N_free + 1;
     I.fill(0);
 
-    // Количество коэффициентов в каждой строке
-    for (let P = 0; P < this.nsize; P++) {
-      for (let k = 0; k < portrait[P].length; k++) {
-
+    // количество коэффициентов в каждой строке
+    for(let P = 0; P < this.nsize; P++) {
+      for(let k = 0; k < portrait[P].length; k++) {
         const Q = portrait[P][k];
 
-        for (let i = 0; i < this.udim; i++) {
+        for(let i = 0; i < this.udim; i++) {
           I[P*this.udim + i + 1] += this.udim;
 
-          if (P !== Q) {
+          if(P !== Q) {
             I[Q*this.udim + i + 1] += this.udim;
           }
         }
       }
     }
 
-    // Начала строк
-    for (let i = 0; i < N; i++) {
+    // начала строк
+    for(let i = 0; i < N; i++) {
       I[i + 1] += I[i];
     }
 
@@ -545,21 +572,20 @@ class Isoparametric2d {
 
     const next = I.slice(0, N);
 
-    // Столбцы обеих половин матрицы
-    for (let P = 0; P < this.nsize; P++) {
-      for (let k = 0; k < portrait[P].length; k++) {
-
+    // столбцы
+    for(let P = 0; P < this.nsize; P++) {
+      for(let k = 0; k < portrait[P].length; k++) {
         const Q = portrait[P][k];
 
-        for (let i = 0; i < this.udim; i++) {
+        for(let i = 0; i < this.udim; i++) {
           const row = P*this.udim + i;
 
-          for (let j = 0; j < this.udim; j++) {
+          for(let j = 0; j < this.udim; j++) {
             const col = Q*this.udim + j;
 
             J[next[row]++] = col;
 
-            if (P !== Q) {
+            if(P !== Q) {
               J[next[col]++] = row;
             }
           }
@@ -574,22 +600,48 @@ class Isoparametric2d {
     let left = I[row];
     let right = I[row + 1] - 1;
 
-    while (left <= right) {
+    while(left <= right) {
       const mid = Math.floor((left + right) / 2);
 
-      if (J[mid] === col) {
+      if(J[mid] === col) {
         return mid;
       }
 
-      if (J[mid] < col) {
+      if(J[mid] < col) {
         left = mid + 1;
       }
-      else {
+      else{
         right = mid - 1;
       }
     }
 
     throw new RangeError("Позиция отсутствует в CSR");
+
+  }
+
+  applyKinematicCsr(N, u, f, I, J, Val) {
+
+    for(let p = 0; p < N; p++) {
+      if(u[p] !== undefined) {
+        for(let k = I[p]; k < I[p + 1]; k++) {
+          if(J[k] === p) {
+            f[p] = Val[k] * u[p];
+          }
+          else {
+            Val[k] = 0;
+          }
+        }
+      }
+      else{
+        for(let k = I[p]; k < I[p + 1]; k++) {
+          const q = J[k];
+          if(u[q] !== undefined) {
+            f[p] -= Val[k] * u[q];
+            Val[k] = 0;
+          }
+        }
+      }
+    }
 
   }
 
@@ -748,6 +800,26 @@ class Isoparametric2d {
     this.load = load;
 
     this.printSCR_Matrix(N, N, Val.length, Val, I, J);
+
+
+    const bound = this.bound.slice();
+
+    this.applyKinematicCsr(N, bound, load, I, J, Val);
+    this.printSCR_Matrix(N, N, Val.length, Val, I, J);
+
+
+    const result = new Array(N).fill(0);
+
+    const { succesfull, error } =
+        cg(N, I, J, Val, load, 1, result);
+
+    if(!succesfull || !result.every(Number.isFinite)) {
+      throw new Error(`cg: решение не получено, error = ${error}`);
+    }
+
+    printResult(this.ndim, this.node, result, 14, 6);
+
+    return 0;
 
 
     // const a = [0, 0, 0], b = [0, 0, 0], c = [0, 0, 0];
