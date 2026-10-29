@@ -563,8 +563,8 @@ class Isoparametric2d {
 
     if(!succesfull || !result.every(Number.isFinite)) {
       throw new Error(`cg: решение не получено, error = ${error}`);
-    }
-c
+    };
+
     printResult(this.ndim, this.node, result, 14, 6);
 
     // в центре конечного элемента
